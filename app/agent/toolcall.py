@@ -127,7 +127,7 @@ class ToolCallAgent(ReActAgent):
             )
             return False
 
-    async def stream_think(self) -> bool:
+    async def stream_think(self) -> AsyncGenerator[Union[str,bool],None]:
         """Process current state and decide next actions using tools"""
         if self.next_step_prompt:
             user_msg = Message.user_message(self.next_step_prompt)
@@ -154,13 +154,15 @@ class ToolCallAgent(ReActAgent):
                 logger.error(
                     f"🚨 Token limit error (from RetryError): {token_limit_error}"
                 )
+                yield f"🚨 Token limit error (from RetryError): {token_limit_error}"
                 self.memory.add_message(
                     Message.assistant_message(
                         f"Maximum token limit reached, cannot continue execution: {str(token_limit_error)}"
                     )
                 )
                 self.state = AgentState.FINISHED
-                return False
+                yield False
+                return
             raise
 
         self.tool_calls = tool_calls = (
@@ -170,15 +172,18 @@ class ToolCallAgent(ReActAgent):
 
         # Log response info
         logger.info(f"✨ {self.name}'s thoughts: {content}")
+        yield f"✨ {self.name}'s thoughts: {content}"
         logger.info(
             f"🛠️ {self.name} selected {len(tool_calls) if tool_calls else 0} tools to use"
         )
+        yield f"🛠️ {self.name} selected {len(tool_calls) if tool_calls else 0} tools to use"
         if tool_calls:
             logger.info(
                 f"🧰 Tools being prepared: {[call.function.name for call in tool_calls]}"
             )
+            yield f"🧰 Tools being prepared: {[call.function.name for call in tool_calls]}"
             logger.info(f"🔧 Tool arguments: {tool_calls[0].function.arguments}")
-
+            yield f"🔧 Tool arguments: {tool_calls[0].function.arguments}"
         try:
             if response is None:
                 raise RuntimeError("No response received from the LLM")
@@ -189,10 +194,12 @@ class ToolCallAgent(ReActAgent):
                     logger.warning(
                         f"🤔 Hmm, {self.name} tried to use tools when they weren't available!"
                     )
+                    yield f"🤔 Hmm, {self.name} tried to use tools when they weren't available!"
                 if content:
                     self.memory.add_message(Message.assistant_message(content))
-                    return True
-                return False
+                    yield True
+                    return
+                yield False
 
             # Create and add assistant message
             assistant_msg = (
@@ -203,21 +210,24 @@ class ToolCallAgent(ReActAgent):
             self.memory.add_message(assistant_msg)
 
             if self.tool_choices == ToolChoice.REQUIRED and not self.tool_calls:
-                return True  # Will be handled in act()
-
+                yield True  # Will be handled in act()
+                return
             # For 'auto' mode, continue with content if no commands but content exists
             if self.tool_choices == ToolChoice.AUTO and not self.tool_calls:
-                return bool(content)
+                yield bool(content)
+                return
 
-            return bool(self.tool_calls)
+            yield bool(self.tool_calls)
+            return
         except Exception as e:
             logger.error(f"🚨 Oops! The {self.name}'s thinking process hit a snag: {e}")
+            yield f"🚨 Oops! The {self.name}'s thinking process hit a snag: {e}"
             self.memory.add_message(
                 Message.assistant_message(
                     f"Error encountered while processing: {str(e)}"
                 )
             )
-            return False
+            yield False
 
     async def act(self) -> str:
         """Execute tool calls and handle their results"""
@@ -254,21 +264,25 @@ class ToolCallAgent(ReActAgent):
 
         return "\n\n".join(results)
 
-    async def stream_act(self) -> str:
+    async def stream_act(self) -> AsyncGenerator[str,None]:
         """Execute tool calls and handle their results"""
         if not self.tool_calls:
             if self.tool_choices == ToolChoice.REQUIRED:
                 raise ValueError(TOOL_CALL_REQUIRED)
 
             # Return last message content if no tool calls
-            return self.messages[-1].content or "No content or commands to execute"
+            yield self.messages[-1].content or "No content or commands to execute"
+            return
 
         results = []
         for command in self.tool_calls:
             # Reset base64_image for each tool call
             self._current_base64_image = None
-
-            result = await self.execute_tool(command)
+            result = ""
+            async for chunk in self.execute_tool_stream(command):
+                if "Observed" in chunk:
+                    result = chunk
+                yield chunk
 
             if self.max_observe:
                 result = result[: self.max_observe]
@@ -276,7 +290,7 @@ class ToolCallAgent(ReActAgent):
             logger.info(
                 f"🎯 Tool '{command.function.name}' completed its mission! Result: {result}"
             )
-
+            yield f"🎯 Tool '{command.function.name}' completed its mission! Result: {result}"
             # Add tool response to memory
             tool_msg = Message.tool_message(
                 content=result,
@@ -287,7 +301,7 @@ class ToolCallAgent(ReActAgent):
             self.memory.add_message(tool_msg)
             results.append(result)
 
-        return "\n\n".join(results)
+        yield "\n\n".join(results)
 
     async def execute_tool(self, command: ToolCall) -> str:
         """Execute a single tool call with robust error handling"""
@@ -332,6 +346,55 @@ class ToolCallAgent(ReActAgent):
             error_msg = f"⚠️ Tool '{name}' encountered a problem: {str(e)}"
             logger.exception(error_msg)
             return f"Error: {error_msg}"
+
+    async def execute_tool_stream(self, command: ToolCall) -> AsyncGenerator[str,None]:
+        """Execute a single tool call with robust error handling"""
+        if not command or not command.function or not command.function.name:
+            yield "Error: Invalid command format"
+            return
+
+        name = command.function.name
+        if name not in self.available_tools.tool_map:
+            yield f"Error: Unknown tool '{name}'"
+            return
+
+        try:
+            # Parse arguments
+            args = json.loads(command.function.arguments or "{}")
+
+            # Execute the tool
+            logger.info(f"🔧 Activating tool: '{name}'...")
+            yield f"🔧 Activating tool: '{name}'..."
+            result = await self.available_tools.execute(name=name, tool_input=args)
+
+            # Handle special tools
+            await self._handle_special_tool(name=name, result=result)
+
+            # Check if result is a ToolResult with base64_image
+            if hasattr(result, "base64_image") and result.base64_image:
+                # Store the base64_image for later use in tool_message
+                self._current_base64_image = result.base64_image
+
+            # Format result for display (standard case)
+            observation = (
+                f"Observed output of cmd `{name}` executed:\n{str(result)}"
+                if result
+                else f"Cmd `{name}` completed with no output"
+            )
+
+            yield observation
+            return
+        except json.JSONDecodeError:
+            error_msg = f"Error parsing arguments for {name}: Invalid JSON format"
+            logger.error(
+                f"📝 Oops! The arguments for '{name}' don't make sense - invalid JSON, arguments:{command.function.arguments}"
+            )
+            yield f"Error: {error_msg}"
+            return
+        except Exception as e:
+            error_msg = f"⚠️ Tool '{name}' encountered a problem: {str(e)}"
+            logger.exception(error_msg)
+            yield f"Error: {error_msg}"
 
     async def _handle_special_tool(self, name: str, result: Any, **kwargs):
         """Handle special tool execution and state changes"""
@@ -382,6 +445,5 @@ class ToolCallAgent(ReActAgent):
         try:
             async for chunk in super().stream_run(request):
                 yield chunk
-            return
         finally:
             await self.cleanup()

@@ -58,4 +58,3 @@ class ReActAgent(BaseAgent, ABC):
             return
         async for act in self.stream_act():
             yield act
-        return

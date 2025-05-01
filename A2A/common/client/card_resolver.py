@@ -1,5 +1,5 @@
 import httpx
-from common.types import (
+from A2A.common.types import (
     AgentCard,
     A2AClientJSONError,
 )

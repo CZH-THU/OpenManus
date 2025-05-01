@@ -2,7 +2,10 @@ import httpx
 from typing import Any, Dict, AsyncIterable, Literal, List, ClassVar
 from pydantic import BaseModel
 from app.agent.manus import Manus
-
+from app.schema import AgentState
+import traceback
+import logging
+logger = logging.getLogger(__name__)
 class ResponseFormat(BaseModel):
     """Respond to the user in this format."""
     status: Literal["input_required", "completed", "error"] = "input_required"
@@ -15,16 +18,49 @@ class A2AManus(Manus):
         response = await self.run(query)
         return self.get_agent_response(config,response)
 
-    async def stream(self, query: str) -> AsyncIterable[Dict[str, Any]]:
-        """Streaming is not supported by Manus."""
-        raise NotImplementedError("Streaming is not supported by Manus yet.")
-
-
-    def get_agent_response(self, config,agent_response):
-        return {
-            "is_task_complete": True,
+    async def stream(self, query: str, sessionId) -> AsyncIterable[Dict[str, Any]]:
+        config = {"configurable": {"thread_id": sessionId}}
+        yield {
+            "is_task_complete": False,
             "require_user_input": False,
-            "content": agent_response,
+            "content":  "processing query"
+        }
+        try:
+            async for response in self.stream_run(query):
+                logger.info(f"Streaming response: {response}")
+                yield self.get_agent_response(config,response)
+        except Exception as e:
+            logger.error(f"Error during streaming: {traceback.format_exc()}")
+            yield {
+                "is_task_complete": False,
+                "require_user_input": True,
+                "content": f"Error during streaming:{str(e)}"
+            }
+
+    def get_agent_response(self, config, response):
+        if "Activating tool: ask_human_stream" in response:
+            return {
+                "is_task_complete": False,
+                "require_user_input": True,
+                "content": response
+            }
+        if "Error" in response:
+            return {
+                "is_task_complete": False,
+                "require_user_input": True,
+                "content": response
+            }
+        if self.current_step >= self.max_steps or self.state == AgentState.FINISHED:
+            return {
+                "is_task_complete": True,
+                "require_user_input": False,
+                "content": response
+            }
+
+        return {
+            "is_task_complete": False,
+            "require_user_input": False,
+            "content": response,
         }
 
     SUPPORTED_CONTENT_TYPES : ClassVar[List[str]] = ["text", "text/plain"]

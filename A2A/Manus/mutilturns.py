@@ -1,11 +1,15 @@
 from A2A.common.server import A2AServer
 from A2A.common.types import AgentCard, AgentCapabilities, AgentSkill, MissingAPIKeyError
 from A2A.common.utils.push_notification_auth import PushNotificationSenderAuth
-from A2A.Manus.task_manager import AgentTaskManager
+from A2A.Manus.task_manager import AgentTaskManager,MutilturnsTaskManager
 from A2A.Manus.agent import A2AManus
-from app.tool.browser_use_tool import _BROWSER_DESCRIPTION
-from app.tool.str_replace_editor import _STR_REPLACE_EDITOR_DESCRIPTION
 from app.tool.terminate import _TERMINATE_DESCRIPTION
+from app.tool import Terminate, ToolCollection
+from app.tool.ask_human import AskHuman,AskHuman_stream
+from app.tool.browser_use_tool import BrowserUseTool, _BROWSER_DESCRIPTION
+from app.tool.mcp import MCPClients, MCPClientTool
+from app.tool.python_execute import PythonExecute
+from app.tool.str_replace_editor import StrReplaceEditor, _STR_REPLACE_EDITOR_DESCRIPTION
 import click
 import os
 import logging
@@ -45,7 +49,7 @@ async def main(host:str = "localhost", port:int = 10000):
                 examples=["Replace 'old' with 'new' in 'file.txt'"],
             ),
             AgentSkill(
-                id="Ask human",
+                id="Ask human stream",
                 name="Ask human Tool",
                 description="Use this tool to ask human for help.",
                 tags=["Ask human for help"],
@@ -74,10 +78,17 @@ async def main(host:str = "localhost", port:int = 10000):
 
         notification_sender_auth = PushNotificationSenderAuth()
         notification_sender_auth.generate_jwk()
+        A2AManus_instance = await A2AManus.create(available_tools=ToolCollection(
+            PythonExecute(),
+            BrowserUseTool(),
+            StrReplaceEditor(),
+            AskHuman_stream(),
+            Terminate(),
+        ))
+        logger.info(f"available_tools: {A2AManus_instance.available_tools.tool_map.keys()}")
         server = A2AServer(
             agent_card=agent_card,
-            task_manager=AgentTaskManager(
-                agent_factory=lambda:A2AManus.create(max_steps=3), notification_sender_auth=notification_sender_auth),
+            task_manager=MutilturnsTaskManager(agent=A2AManus_instance, notification_sender_auth=notification_sender_auth),
             host=host,
             port=port,
         )

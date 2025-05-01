@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentTaskManager(InMemoryTaskManager):
-    def __init__(self, agent_factory: Callable[[],Awaitable[A2AManus]], notification_sender_auth: PushNotificationSenderAuth):
+    def __init__(self, notification_sender_auth: PushNotificationSenderAuth, agent_factory: Callable[[],Awaitable[A2AManus]] = None):
         super().__init__()
         self.agent_factory = agent_factory
         self.notification_sender_auth = notification_sender_auth
@@ -44,6 +44,8 @@ class AgentTaskManager(InMemoryTaskManager):
     async def _run_streaming_agent(self, request: SendTaskStreamingRequest):
         task_send_params: TaskSendParams = request.params
         query = self._get_user_query(task_send_params)
+        if self.agent_factory is None:
+            raise ValueError("Agent factory is not set")
         agent= await self.agent_factory()
         try:
             async for item in agent.stream(query, task_send_params.sessionId):
@@ -135,6 +137,8 @@ class AgentTaskManager(InMemoryTaskManager):
 
         task_send_params: TaskSendParams = request.params
         query = self._get_user_query(task_send_params)
+        if self.agent_factory is None:
+            raise ValueError("Agent factory is not set")
         agent= await self.agent_factory()
         try:
             agent_response = await agent.invoke(query, task_send_params.sessionId)
@@ -245,3 +249,91 @@ class AgentTaskManager(InMemoryTaskManager):
 
         await super().set_push_notification_info(task_id, push_notification_config)
         return True
+
+
+class MutilturnsTaskManager(AgentTaskManager):
+    def __init__(self, notification_sender_auth: PushNotificationSenderAuth, agent: A2AManus):
+        super().__init__(notification_sender_auth = notification_sender_auth)
+        self.agent=agent
+
+    async def _run_streaming_agent(self, request: SendTaskStreamingRequest):
+        task_send_params: TaskSendParams = request.params
+        query = self._get_user_query(task_send_params)
+        try:
+            async for item in self.agent.stream(query, task_send_params.sessionId):
+                is_task_complete = item["is_task_complete"]
+                require_user_input = item["require_user_input"]
+                artifact = None
+                message = None
+                parts = [{"type": "text", "text": item["content"]}]
+                end_stream = False
+
+                if not is_task_complete and not require_user_input:
+                    task_state = TaskState.WORKING
+                    message = Message(role="agent", parts=parts)
+                elif require_user_input:
+                    task_state = TaskState.INPUT_REQUIRED
+                    message = Message(role="agent", parts=parts)
+                    end_stream = True
+                else:
+                    task_state = TaskState.COMPLETED
+                    artifact = Artifact(parts=parts, index=0, append=False)
+                    end_stream = True
+
+                task_status = TaskStatus(state=task_state, message=message)
+                latest_task = await self.update_store(
+                    task_send_params.id,
+                    task_status,
+                    None if artifact is None else [artifact],
+                )
+                await self.send_task_notification(latest_task)
+
+                if artifact:
+                    task_artifact_update_event = TaskArtifactUpdateEvent(
+                        id=task_send_params.id, artifact=artifact
+                    )
+                    await self.enqueue_events_for_sse(
+                        task_send_params.id, task_artifact_update_event
+                    )
+
+
+                task_update_event = TaskStatusUpdateEvent(
+                    id=task_send_params.id, status=task_status, final=end_stream
+                )
+                await self.enqueue_events_for_sse(
+                    task_send_params.id, task_update_event
+                )
+
+        except Exception as e:
+            logger.error(f"An error occurred while streaming the response: {e}")
+            await self.enqueue_events_for_sse(
+                task_send_params.id,
+                InternalError(message=f"An error occurred while streaming the response: {e}")
+            )
+
+    async def on_send_task(self, request: SendTaskRequest) -> SendTaskResponse:
+        """Handles the 'send task' request."""
+        validation_error = self._validate_request(request)
+        if validation_error:
+            return SendTaskResponse(id=request.id, error=validation_error.error)
+
+        if request.params.pushNotification:
+            if not await self.set_push_notification_info(request.params.id, request.params.pushNotification):
+                return SendTaskResponse(id=request.id, error=InvalidParamsError(message="Push notification URL is invalid"))
+
+        await self.upsert_task(request.params)
+        task = await self.update_store(
+            request.params.id, TaskStatus(state=TaskState.WORKING), None
+        )
+        await self.send_task_notification(task)
+
+        task_send_params: TaskSendParams = request.params
+        query = self._get_user_query(task_send_params)
+        try:
+            agent_response = await self.agent.invoke(query, task_send_params.sessionId)
+        except Exception as e:
+            logger.error(f"Error invoking agent: {e}")
+            raise ValueError(f"Error invoking agent: {e}")
+        return await self._process_agent_response(
+            request, agent_response
+        )

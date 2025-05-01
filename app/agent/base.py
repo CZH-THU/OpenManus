@@ -153,7 +153,7 @@ class BaseAgent(BaseModel, ABC):
         await SANDBOX_CLIENT.cleanup()
         return "\n".join(results) if results else "No steps executed"
 
-    async def stream(self, request: Optional[str] = None) -> AsyncGenerator[str, None]:
+    async def stream_run(self, request: Optional[str] = None) -> AsyncGenerator[str, None]:
         """Execute the agent's main loop asynchronously.
 
         Args:

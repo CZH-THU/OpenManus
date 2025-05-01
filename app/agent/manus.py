@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional,AsyncGenerator,Union
 
 from pydantic import Field, model_validator
 
@@ -8,7 +8,7 @@ from app.config import config
 from app.logger import logger
 from app.prompt.manus import NEXT_STEP_PROMPT, SYSTEM_PROMPT
 from app.tool import Terminate, ToolCollection
-from app.tool.ask_human import AskHuman
+from app.tool.ask_human import AskHuman,AskHuman_stream
 from app.tool.browser_use_tool import BrowserUseTool
 from app.tool.mcp import MCPClients, MCPClientTool
 from app.tool.python_execute import PythonExecute
@@ -41,7 +41,7 @@ class Manus(ToolCallAgent):
         )
     )
 
-    special_tool_names: list[str] = Field(default_factory=lambda: [Terminate().name])
+    special_tool_names: list[str] = Field(default_factory=lambda: [Terminate().name,AskHuman_stream().name])
     browser_context_helper: Optional[BrowserContextHelper] = None
 
     # Track connected MCP servers
@@ -163,3 +163,30 @@ class Manus(ToolCallAgent):
         self.next_step_prompt = original_prompt
 
         return result
+
+    async def stream_think(self) -> AsyncGenerator[Union[str,bool],None]:
+        """Process current state and decide next actions with appropriate context."""
+        if not self._initialized:
+            await self.initialize_mcp_servers()
+            self._initialized = True
+
+        original_prompt = self.next_step_prompt
+        recent_messages = self.memory.messages[-3:] if self.memory.messages else []
+        browser_in_use = any(
+            tc.function.name == BrowserUseTool().name
+            for msg in recent_messages
+            if msg.tool_calls
+            for tc in msg.tool_calls
+        )
+
+        if browser_in_use:
+            self.next_step_prompt = (
+                await self.browser_context_helper.format_next_step_prompt()
+            )
+
+        async for chunk in super().stream_think():
+            if isinstance(chunk, bool):
+                self.next_step_prompt = original_prompt
+                yield chunk
+                return
+            yield chunk
