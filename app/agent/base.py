@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -153,8 +153,57 @@ class BaseAgent(BaseModel, ABC):
         await SANDBOX_CLIENT.cleanup()
         return "\n".join(results) if results else "No steps executed"
 
+    async def stream(self, request: Optional[str] = None) -> AsyncGenerator[str, None]:
+        """Execute the agent's main loop asynchronously.
+
+        Args:
+            request: Optional initial user request to process.
+
+        Returns:
+            A string summarizing the execution results.
+
+        Raises:
+            RuntimeError: If the agent is not in IDLE state at start.
+        """
+        if self.state != AgentState.IDLE:
+            raise RuntimeError(f"Cannot run agent from state: {self.state}")
+
+        if request:
+            self.update_memory("user", request)
+
+        results: List[str] = []
+        async with self.state_context(AgentState.RUNNING):
+            while (
+                self.current_step < self.max_steps and self.state != AgentState.FINISHED
+            ):
+                self.current_step += 1
+                logger.info(f"Executing step {self.current_step}/{self.max_steps}")
+                yield f"Executing step {self.current_step}/{self.max_steps}"
+                async for step_result in self.stream_step():
+                    yield step_result
+
+                # Check for stuck state
+                if self.is_stuck():
+                    self.handle_stuck_state()
+
+                results.append(f"Step {self.current_step}: {step_result}")
+
+            if self.current_step >= self.max_steps:
+                self.current_step = 0
+                self.state = AgentState.IDLE
+                results.append(f"Terminated: Reached max steps ({self.max_steps})")
+        await SANDBOX_CLIENT.cleanup()
+        yield "\n".join(results) if results else "No steps executed"
+
     @abstractmethod
     async def step(self) -> str:
+        """Execute a single step in the agent's workflow.
+
+        Must be implemented by subclasses to define specific behavior.
+        """
+
+    @abstractmethod
+    async def stream_step(self) -> AsyncGenerator[str, None]:
         """Execute a single step in the agent's workflow.
 
         Must be implemented by subclasses to define specific behavior.
