@@ -11,11 +11,11 @@ class ResponseFormat(BaseModel):
     status: Literal["input_required", "completed", "error"] = "input_required"
     message: str
 
-class A2AManus(Manus):
+class Mulitturns_A2AManus(Manus):
 
     async def invoke(self, query, sessionId) -> str:
         config = {"configurable": {"thread_id": sessionId}}
-        response = await self.run(query)
+        response = await self.run_session(sessionId,query)
         return self.get_agent_response(config,response)
 
     async def stream(self, query: str, sessionId) -> AsyncIterable[Dict[str, Any]]:
@@ -26,7 +26,7 @@ class A2AManus(Manus):
             "content":  "processing query"
         }
         try:
-            async for response in self.stream_run(query):
+            async for response in self.stream_run_session(sessionId,query):
                 logger.info(f"Streaming response: {response}")
                 yield self.get_agent_response(config,response)
         except Exception as e:
@@ -50,7 +50,7 @@ class A2AManus(Manus):
                 "require_user_input": True,
                 "content": response
             }
-        if (self.current_step >= self.max_steps and self.state != AgentState.RUNNING) or self.state == AgentState.FINISHED:
+        if (self.current_step >= self.max_steps and self.state != AgentState.RUNNING) or self.state == AgentState.FINISHED or "Results:" in response:
             return {
                 "is_task_complete": True,
                 "require_user_input": False,

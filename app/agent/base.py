@@ -113,6 +113,40 @@ class BaseAgent(BaseModel, ABC):
         kwargs = {"base64_image": base64_image, **(kwargs if role == "tool" else {})}
         self.memory.add_message(message_map[role](content, **kwargs))
 
+
+    def update_session(
+        self,
+        sessionId:str,
+        role: ROLE_TYPE,  # type: ignore
+        content: str,
+        base64_image: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        """Add a message to the agent's memory.
+
+        Args:
+            role: The role of the message sender (user, system, assistant, tool).
+            content: The message content.
+            base64_image: Optional base64 encoded image.
+            **kwargs: Additional arguments (e.g., tool_call_id for tool messages).
+
+        Raises:
+            ValueError: If the role is unsupported.
+        """
+        message_map = {
+            "user": Message.user_message,
+            "system": Message.system_message,
+            "assistant": Message.assistant_message,
+            "tool": lambda content, **kw: Message.tool_message(content, **kw),
+        }
+
+        if role not in message_map:
+            raise ValueError(f"Unsupported message role: {role}")
+
+        # Create message with appropriate parameters based on role
+        kwargs = {"base64_image": base64_image, **(kwargs if role == "tool" else {})}
+        self.memory.add_session_message(sessionId,message_map[role](content, **kwargs))
+
     async def run(self, request: Optional[str] = None) -> str:
         """Execute the agent's main loop asynchronously.
 
@@ -153,6 +187,59 @@ class BaseAgent(BaseModel, ABC):
         await SANDBOX_CLIENT.cleanup()
         return "\n".join(results) if results else "No steps executed"
 
+    async def run_session(self,sessionId:str, request: Optional[str] = None) -> str:
+        """Execute the agent's main loop asynchronously.
+
+        Args:
+            request: Optional initial user request to process.
+
+        Returns:
+            A string summarizing the execution results.
+
+        Raises:
+            RuntimeError: If the agent is not in IDLE state at start.
+        """
+        if sessionId not in self.session:
+            self.current_step = 0
+            self.memory.steps_of_session[sessionId] = 0
+            self.session[sessionId] = []
+        elif sessionId in self.session:
+            self.current_step = self.memory.steps_of_session[sessionId]
+            if self.current_step >= self.max_steps:
+                self.current_step = 0
+                self.memory.steps_of_session[sessionId] = 0
+                self.memory.clear_session(sessionId)
+        if self.state != AgentState.IDLE:
+            raise RuntimeError(f"Cannot run agent from state: {self.state}")
+
+        if request:
+            self.update_session(sessionId,"user", request)
+
+        results: List[str] = []
+        async with self.state_context(AgentState.RUNNING):
+            while (
+                self.current_step < self.max_steps and self.state != AgentState.FINISHED
+            ):
+                self.current_step += 1
+                self.memory.steps_of_session[sessionId] = self.current_step
+                logger.info(f"Executing step {self.current_step}/{self.max_steps}")
+                step_result = await self.step_session(sessionId)
+
+                # Check for stuck state
+                if self.is_stuck():
+                    self.handle_stuck_state()
+
+                results.append(f"Step {self.current_step}: {step_result}")
+
+            if self.current_step >= self.max_steps:
+                self.current_step = 0
+                self.memory.steps_of_session[sessionId] = 0
+                self.state = AgentState.IDLE
+                results.append(f"Terminated: Reached max steps ({self.max_steps})")
+        await SANDBOX_CLIENT.cleanup()
+        return "\n".join(results) if results else "No steps executed"
+
+
     async def stream_run(self, request: Optional[str] = None) -> AsyncGenerator[str, None]:
         """Execute the agent's main loop asynchronously.
 
@@ -182,12 +269,11 @@ class BaseAgent(BaseModel, ABC):
                 async for step_result in self.stream_step():
                     yield step_result
 
-                # Check for stuck state
-                if self.is_stuck():
-                    self.handle_stuck_state()
+                    # Check for stuck state
+                    if self.is_stuck():
+                        self.handle_stuck_state()
 
-                results.append(f"Step {self.current_step}: {step_result}")
-
+                    results.append(f"Step {self.current_step}: {step_result}")
             if self.current_step >= self.max_steps:
                 self.current_step = 0
                 self.state = AgentState.IDLE
@@ -195,8 +281,67 @@ class BaseAgent(BaseModel, ABC):
         await SANDBOX_CLIENT.cleanup()
         yield "\n".join(results) if results else "No steps executed"
 
+    async def stream_run_session(self,sessionId:str, request: Optional[str] = None) -> AsyncGenerator[str, None]:
+        """Execute the agent's main loop asynchronously.
+
+        Args:
+            request: Optional initial user request to process.
+
+        Returns:
+            A string summarizing the execution results.
+
+        Raises:
+            RuntimeError: If the agent is not in IDLE state at start.
+        """
+        if sessionId not in self.session:
+            self.current_step = 0
+            self.memory.steps_of_session[sessionId] = 0
+            self.session[sessionId] = []
+        elif sessionId in self.session:
+            self.current_step = self.memory.steps_of_session[sessionId]
+            if self.current_step >= self.max_steps:
+                self.current_step = 0
+                self.memory.steps_of_session[sessionId] = 0
+                self.memory.clear_session(sessionId)
+        if self.state != AgentState.IDLE:
+            raise RuntimeError(f"Cannot run agent from state: {self.state}")
+
+        if request:
+            self.update_session(sessionId,"user", request)
+
+        results: List[str] = []
+        async with self.state_context(AgentState.RUNNING):
+            while (
+                self.current_step < self.max_steps and self.state != AgentState.FINISHED
+            ):
+                self.current_step += 1
+                self.memory.steps_of_session[sessionId] = self.current_step
+                logger.info(f"Executing step {self.current_step}/{self.max_steps}")
+                yield f"Executing step {self.current_step}/{self.max_steps}"
+                async for step_result in self.stream_step_session(sessionId):
+                    yield step_result
+
+                    # Check for stuck state
+                    if self.is_stuck():
+                        self.handle_stuck_state()
+
+                    results.append(f"Step {self.current_step}: {step_result}")
+            if self.current_step >= self.max_steps:
+                self.current_step = 0
+                self.memory.steps_of_session[sessionId] = 0
+                self.state = AgentState.IDLE
+                results.append(f"Terminated: Reached max steps ({self.max_steps})")
+        await SANDBOX_CLIENT.cleanup()
+        yield "\n Results:".join(results) if results else "No steps executed"
+
     @abstractmethod
     async def step(self) -> str:
+        """Execute a single step in the agent's workflow.
+
+        Must be implemented by subclasses to define specific behavior.
+        """
+    @abstractmethod
+    async def step_session(self,sessionId:str) -> str:
         """Execute a single step in the agent's workflow.
 
         Must be implemented by subclasses to define specific behavior.
@@ -204,6 +349,12 @@ class BaseAgent(BaseModel, ABC):
 
     @abstractmethod
     async def stream_step(self) -> AsyncGenerator[str, None]:
+        """Execute a single step in the agent's workflow.
+
+        Must be implemented by subclasses to define specific behavior.
+        """
+    @abstractmethod
+    async def stream_step_session(self,sessionId:str) -> AsyncGenerator[str, None]:
         """Execute a single step in the agent's workflow.
 
         Must be implemented by subclasses to define specific behavior.
@@ -243,3 +394,12 @@ class BaseAgent(BaseModel, ABC):
     def messages(self, value: List[Message]):
         """Set the list of messages in the agent's memory."""
         self.memory.messages = value
+    @property
+    def session(self) -> dict[str,List[Message]]:
+        """Retrieve a list of messages from the agent's memory."""
+        return self.memory.session
+
+    @session.setter
+    def session(self, value: dict[List[Message]]):
+        """Set the list of messages in the agent's memory."""
+        self.session = value

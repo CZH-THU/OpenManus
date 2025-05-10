@@ -159,6 +159,8 @@ class Message(BaseModel):
 class Memory(BaseModel):
     messages: List[Message] = Field(default_factory=list)
     max_messages: int = Field(default=100)
+    session: dict[str,List[Message]] = Field(default_factory=dict)
+    steps_of_session: dict[str,int] = Field(default_factory=dict)
 
     def add_message(self, message: Message) -> None:
         """Add a message to memory"""
@@ -185,3 +187,38 @@ class Memory(BaseModel):
     def to_dict_list(self) -> List[dict]:
         """Convert messages to list of dicts"""
         return [msg.to_dict() for msg in self.messages]
+
+
+    def add_session_message(self,sessionId: str, message: Message) -> None:
+        """Add a message to memory"""
+        if sessionId not in self.session:
+            self.session[sessionId] = []
+        self.session[sessionId].append(message)
+        # Optional: Implement message limit
+        if len(self.session[sessionId]) > self.max_messages:
+            self.session[sessionId] = self.session[sessionId][-self.max_messages :]
+
+    def add_session_messages(self, sessionId: str,messages: List[Message]) -> None:
+        """Add multiple messages to memory"""
+        if sessionId not in self.session:
+            self.session[sessionId] = []
+        self.session[sessionId].extend(messages)
+        # Optional: Implement message limit
+        if len(self.session[sessionId]) > self.max_messages:
+            self.session[sessionId] = self.session[sessionId][-self.max_messages :]
+
+    def clear_session(self,sessionId:str) -> None:
+        """Clear all messages"""
+        self.session[sessionId].clear()
+
+    def get_recent_messages_of_session(self, sessionId:str,n: int) -> List[Message]:
+        """Get n most recent messages"""
+        if sessionId not in self.session:
+            return []
+        return self.session[sessionId][-n:]
+
+    def session_to_dict_list(self,sessionId:str) -> List[dict]:
+        """Convert messages to list of dicts"""
+        if sessionId not in self.session:
+            return [{}]
+        return [msg.to_dict() for msg in self.session[sessionId]]

@@ -164,6 +164,33 @@ class Manus(ToolCallAgent):
 
         return result
 
+    async def think_session(self,sessionId:str) -> bool:
+        """Process current state and decide next actions with appropriate context."""
+        if not self._initialized:
+            await self.initialize_mcp_servers()
+            self._initialized = True
+
+        original_prompt = self.next_step_prompt
+        recent_messages = self.session[sessionId][-3:] if self.session[sessionId]else []
+        browser_in_use = any(
+            tc.function.name == BrowserUseTool().name
+            for msg in recent_messages
+            if msg.tool_calls
+            for tc in msg.tool_calls
+        )
+
+        if browser_in_use:
+            self.next_step_prompt = (
+                await self.browser_context_helper.format_next_step_prompt()
+            )
+
+        result = await super().think_session(sessionId)
+
+        # Restore original prompt
+        self.next_step_prompt = original_prompt
+
+        return result
+
     async def stream_think(self) -> AsyncGenerator[Union[str,bool],None]:
         """Process current state and decide next actions with appropriate context."""
         if not self._initialized:
@@ -185,6 +212,33 @@ class Manus(ToolCallAgent):
             )
 
         async for chunk in super().stream_think():
+            if isinstance(chunk, bool):
+                self.next_step_prompt = original_prompt
+                yield chunk
+                return
+            yield chunk
+
+    async def stream_think_Session(self,sessionId:str) -> AsyncGenerator[Union[str,bool],None]:
+        """Process current state and decide next actions with appropriate context."""
+        if not self._initialized:
+            await self.initialize_mcp_servers()
+            self._initialized = True
+
+        original_prompt = self.next_step_prompt
+        recent_messages = self.session[sessionId][-3:] if self.session[sessionId] else []
+        browser_in_use = any(
+            tc.function.name == BrowserUseTool().name
+            for msg in recent_messages
+            if msg.tool_calls
+            for tc in msg.tool_calls
+        )
+
+        if browser_in_use:
+            self.next_step_prompt = (
+                await self.browser_context_helper.format_next_step_prompt()
+            )
+
+        async for chunk in super().stream_think_session(sessionId):
             if isinstance(chunk, bool):
                 self.next_step_prompt = original_prompt
                 yield chunk

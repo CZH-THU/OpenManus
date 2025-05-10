@@ -127,6 +127,100 @@ class ToolCallAgent(ReActAgent):
             )
             return False
 
+    async def think_session(self,sessionId:str) -> bool:
+        """Process current state and decide next actions using tools"""
+        if self.next_step_prompt:
+            user_msg = Message.user_message(self.next_step_prompt)
+            self.session[sessionId] += [user_msg]
+            # self.memory.add_session_messages(sessionId,[user_msg])
+        try:
+            # Get response with tool options
+            response = await self.llm.ask_tool(
+                messages=self.session[sessionId],
+                system_msgs=(
+                    [Message.system_message(self.system_prompt)]
+                    if self.system_prompt
+                    else None
+                ),
+                tools=self.available_tools.to_params(),
+                tool_choice=self.tool_choices,
+            )
+        except ValueError:
+            raise
+        except Exception as e:
+            # Check if this is a RetryError containing TokenLimitExceeded
+            if hasattr(e, "__cause__") and isinstance(e.__cause__, TokenLimitExceeded):
+                token_limit_error = e.__cause__
+                logger.error(
+                    f"🚨 Token limit error (from RetryError): {token_limit_error}"
+                )
+                self.memory.add_session_message(
+                    sessionId,
+                    Message.assistant_message(
+                        f"Maximum token limit reached, cannot continue execution: {str(token_limit_error)}"
+                    )
+                )
+                self.state = AgentState.FINISHED
+                return False
+            raise
+
+        self.tool_calls = tool_calls = (
+            response.tool_calls if response and response.tool_calls else []
+        )
+        content = response.content if response and response.content else ""
+
+        # Log response info
+        logger.info(f"✨ {self.name}'s thoughts: {content}")
+        logger.info(
+            f"🛠️ {self.name} selected {len(tool_calls) if tool_calls else 0} tools to use"
+        )
+        if tool_calls:
+            logger.info(
+                f"🧰 Tools being prepared: {[call.function.name for call in tool_calls]}"
+            )
+            logger.info(f"🔧 Tool arguments: {tool_calls[0].function.arguments}")
+
+        try:
+            if response is None:
+                raise RuntimeError("No response received from the LLM")
+
+            # Handle different tool_choices modes
+            if self.tool_choices == ToolChoice.NONE:
+                if tool_calls:
+                    logger.warning(
+                        f"🤔 Hmm, {self.name} tried to use tools when they weren't available!"
+                    )
+                if content:
+                    self.memory.add_session_message(sessionId,Message.assistant_message(content))
+                    return True
+                return False
+
+            # Create and add assistant message
+            assistant_msg = (
+                Message.from_tool_calls(content=content, tool_calls=self.tool_calls)
+                if self.tool_calls
+                else Message.assistant_message(content)
+            )
+            self.memory.add_session_message(sessionId,assistant_msg)
+
+            if self.tool_choices == ToolChoice.REQUIRED and not self.tool_calls:
+                return True  # Will be handled in act()
+
+            # For 'auto' mode, continue with content if no commands but content exists
+            if self.tool_choices == ToolChoice.AUTO and not self.tool_calls:
+                return bool(content)
+
+            return bool(self.tool_calls)
+        except Exception as e:
+            logger.error(f"🚨 Oops! The {self.name}'s thinking process hit a snag: {e}")
+            self.memory.add_session_message(
+                sessionId,
+                Message.assistant_message(
+                    f"Error encountered while processing: {str(e)}"
+                )
+            )
+            return False
+
     async def stream_think(self) -> AsyncGenerator[Union[str,bool],None]:
         """Process current state and decide next actions using tools"""
         if self.next_step_prompt:
@@ -229,6 +323,110 @@ class ToolCallAgent(ReActAgent):
             )
             yield False
 
+    async def stream_think_session(self,sessionId:str) -> AsyncGenerator[Union[str,bool],None]:
+        """Process current state and decide next actions using tools"""
+        if self.next_step_prompt:
+            user_msg = Message.user_message(self.next_step_prompt)
+            self.session[sessionId] += [user_msg]
+            # self.memory.add_session_messages(sessionId,[user_msg])
+        try:
+            # Get response with tool options
+            response = await self.llm.ask_tool(
+                messages=self.session[sessionId],
+                system_msgs=(
+                    [Message.system_message(self.system_prompt)]
+                    if self.system_prompt
+                    else None
+                ),
+                tools=self.available_tools.to_params(),
+                tool_choice=self.tool_choices,
+            )
+        except ValueError:
+            raise
+        except Exception as e:
+            # Check if this is a RetryError containing TokenLimitExceeded
+            if hasattr(e, "__cause__") and isinstance(e.__cause__, TokenLimitExceeded):
+                token_limit_error = e.__cause__
+                logger.error(
+                    f"🚨 Token limit error (from RetryError): {token_limit_error}"
+                )
+                yield f"🚨 Token limit error (from RetryError): {token_limit_error}"
+                self.memory.add_session_message(
+                    sessionId,
+                    Message.assistant_message(
+                        f"Maximum token limit reached, cannot continue execution: {str(token_limit_error)}"
+                    )
+                )
+                self.state = AgentState.FINISHED
+                yield False
+                return
+            raise
+
+        self.tool_calls = tool_calls = (
+            response.tool_calls if response and response.tool_calls else []
+        )
+        content = response.content if response and response.content else ""
+
+        # Log response info
+        logger.info(f"✨ {self.name}'s thoughts: {content}")
+        yield f"✨ {self.name}'s thoughts: {content}"
+        logger.info(
+            f"🛠️ {self.name} selected {len(tool_calls) if tool_calls else 0} tools to use"
+        )
+        yield f"🛠️ {self.name} selected {len(tool_calls) if tool_calls else 0} tools to use"
+        if tool_calls:
+            logger.info(
+                f"🧰 Tools being prepared: {[call.function.name for call in tool_calls]}"
+            )
+            yield f"🧰 Tools being prepared: {[call.function.name for call in tool_calls]}"
+            logger.info(f"🔧 Tool arguments: {tool_calls[0].function.arguments}")
+            yield f"🔧 Tool arguments: {tool_calls[0].function.arguments}"
+        try:
+            if response is None:
+                raise RuntimeError("No response received from the LLM")
+
+            # Handle different tool_choices modes
+            if self.tool_choices == ToolChoice.NONE:
+                if tool_calls:
+                    logger.warning(
+                        f"🤔 Hmm, {self.name} tried to use tools when they weren't available!"
+                    )
+                    yield f"🤔 Hmm, {self.name} tried to use tools when they weren't available!"
+                if content:
+                    self.memory.add_sessionId_message(sessionId,Message.assistant_message(content))
+                    yield True
+                    return
+                yield False
+
+            # Create and add assistant message
+            assistant_msg = (
+                Message.from_tool_calls(content=content, tool_calls=self.tool_calls)
+                if self.tool_calls
+                else Message.assistant_message(content)
+            )
+            self.memory.add_session_message(sessionId,assistant_msg)
+
+            if self.tool_choices == ToolChoice.REQUIRED and not self.tool_calls:
+                yield True  # Will be handled in act()
+                return
+            # For 'auto' mode, continue with content if no commands but content exists
+            if self.tool_choices == ToolChoice.AUTO and not self.tool_calls:
+                yield bool(content)
+                return
+
+            yield bool(self.tool_calls)
+            return
+        except Exception as e:
+            logger.error(f"🚨 Oops! The {self.name}'s thinking process hit a snag: {e}")
+            yield f"🚨 Oops! The {self.name}'s thinking process hit a snag: {e}"
+            self.memory.add_session_message(
+                sessionId,
+                Message.assistant_message(
+                    f"Error encountered while processing: {str(e)}"
+                )
+            )
+            yield False
+
     async def act(self) -> str:
         """Execute tool calls and handle their results"""
         if not self.tool_calls:
@@ -260,6 +458,41 @@ class ToolCallAgent(ReActAgent):
                 base64_image=self._current_base64_image,
             )
             self.memory.add_message(tool_msg)
+            results.append(result)
+
+        return "\n\n".join(results)
+
+    async def act_session(self,sessionId:str) -> str:
+        """Execute tool calls and handle their results"""
+        if not self.tool_calls:
+            if self.tool_choices == ToolChoice.REQUIRED:
+                raise ValueError(TOOL_CALL_REQUIRED)
+
+            # Return last message content if no tool calls
+            return self.session[sessionId][-1].content or "No content or commands to execute"
+
+        results = []
+        for command in self.tool_calls:
+            # Reset base64_image for each tool call
+            self._current_base64_image = None
+
+            result = await self.execute_tool(command,sessionId)
+
+            if self.max_observe:
+                result = result[: self.max_observe]
+
+            logger.info(
+                f"🎯 Tool '{command.function.name}' completed its mission! Result: {result}"
+            )
+
+            # Add tool response to memory
+            tool_msg = Message.tool_message(
+                content=result,
+                tool_call_id=command.id,
+                name=command.function.name,
+                base64_image=self._current_base64_image,
+            )
+            self.memory.add_session_message(sessionId,tool_msg)
             results.append(result)
 
         return "\n\n".join(results)
@@ -299,6 +532,45 @@ class ToolCallAgent(ReActAgent):
                 base64_image=self._current_base64_image,
             )
             self.memory.add_message(tool_msg)
+            results.append(result)
+
+        yield "\n\n".join(results)
+
+    async def stream_act_session(self,sessionId:str) -> AsyncGenerator[str,None]:
+        """Execute tool calls and handle their results"""
+        if not self.tool_calls:
+            if self.tool_choices == ToolChoice.REQUIRED:
+                raise ValueError(TOOL_CALL_REQUIRED)
+
+            # Return last message content if no tool calls
+            yield self.session[sessionId][-1].content or "No content or commands to execute"
+            return
+
+        results = []
+        for command in self.tool_calls:
+            # Reset base64_image for each tool call
+            self._current_base64_image = None
+            result = ""
+            async for chunk in self.execute_tool_stream(command):
+                if "Observed" in chunk:
+                    result = chunk
+                yield chunk
+
+            if self.max_observe:
+                result = result[: self.max_observe]
+
+            logger.info(
+                f"🎯 Tool '{command.function.name}' completed its mission! Result: {result}"
+            )
+            yield f"🎯 Tool '{command.function.name}' completed its mission! Result: {result}"
+            # Add tool response to memory
+            tool_msg = Message.tool_message(
+                content=result,
+                tool_call_id=command.id,
+                name=command.function.name,
+                base64_image=self._current_base64_image,
+            )
+            self.memory.add_session_message(sessionId,tool_msg)
             results.append(result)
 
         yield "\n\n".join(results)
@@ -366,6 +638,7 @@ class ToolCallAgent(ReActAgent):
             logger.info(f"🔧 Activating tool: '{name}'...")
             yield f"🔧 Activating tool: '{name}'..."
             result = await self.available_tools.execute(name=name, tool_input=args)
+            yield f"✅ tool '{name}' execute result is {result}"
 
             # Handle special tools
             await self._handle_special_tool(name=name, result=result)
@@ -437,6 +710,12 @@ class ToolCallAgent(ReActAgent):
             return await super().run(request)
         finally:
             await self.cleanup()
+    async def run_session(self,sessionId:str, request: Optional[str] = None) -> str:
+        """Run the agent with cleanup when done."""
+        try:
+            return await super().run_session(sessionId,request)
+        finally:
+            await self.cleanup()
 
     async def stream_run(
         self, request: Optional[str] = None
@@ -444,6 +723,16 @@ class ToolCallAgent(ReActAgent):
         """Run the agent with cleanup when done."""
         try:
             async for chunk in super().stream_run(request):
+                yield chunk
+        finally:
+            await self.cleanup()
+
+    async def stream_run_session(
+        self,sessionId:str, request: Optional[str] = None
+    ) -> AsyncGenerator[str, None]:
+        """Run the agent with cleanup when done."""
+        try:
+            async for chunk in super().stream_run_session(sessionId,request):
                 yield chunk
         finally:
             await self.cleanup()

@@ -2,7 +2,7 @@ from A2A.common.server import A2AServer
 from A2A.common.types import AgentCard, AgentCapabilities, AgentSkill, MissingAPIKeyError
 from A2A.common.utils.push_notification_auth import PushNotificationSenderAuth
 from A2A.Manus.task_manager import AgentTaskManager,MutilturnsTaskManager
-from A2A.Manus.agent import A2AManus
+from A2A.Manus.mulitturns_agent import Mulitturns_A2AManus
 from app.tool.terminate import _TERMINATE_DESCRIPTION
 from app.tool import Terminate, ToolCollection
 from app.tool.ask_human import AskHuman,AskHuman_stream
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 async def main(host:str = "localhost", port:int = 10000):
     """Starts the Manus Agent server."""
     try:
-        capabilities = AgentCapabilities(streaming=False, pushNotifications=True)
+        capabilities = AgentCapabilities(streaming=True, pushNotifications=True)
         skills=[
             AgentSkill(
             id="Python Execute",
@@ -70,15 +70,15 @@ async def main(host:str = "localhost", port:int = 10000):
             description="A versatile agent that can solve various tasks using multiple tools including MCP-based tools",
             url=f"http://{host}:{port}/",
             version="1.0.0",
-            defaultInputModes=A2AManus.SUPPORTED_CONTENT_TYPES,
-            defaultOutputModes=A2AManus.SUPPORTED_CONTENT_TYPES,
+            defaultInputModes=Mulitturns_A2AManus.SUPPORTED_CONTENT_TYPES,
+            defaultOutputModes=Mulitturns_A2AManus.SUPPORTED_CONTENT_TYPES,
             capabilities=capabilities,
             skills=skills,
         )
 
         notification_sender_auth = PushNotificationSenderAuth()
         notification_sender_auth.generate_jwk()
-        A2AManus_instance = await A2AManus.create(available_tools=ToolCollection(
+        A2AManus_instance = await Mulitturns_A2AManus.create(max_steps=5,available_tools=ToolCollection(
             PythonExecute(),
             BrowserUseTool(),
             StrReplaceEditor(),

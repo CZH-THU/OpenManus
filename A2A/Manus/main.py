@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 async def main(host:str = "localhost", port:int = 10000):
     """Starts the Manus Agent server."""
     try:
-        capabilities = AgentCapabilities(streaming=False, pushNotifications=True)
+        capabilities = AgentCapabilities(streaming=True, pushNotifications=True)
         skills=[
             AgentSkill(
             id="Python Execute",
