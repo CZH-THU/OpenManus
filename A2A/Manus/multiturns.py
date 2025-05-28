@@ -1,7 +1,14 @@
-from A2A.common.server import A2AServer
-from A2A.common.types import AgentCard, AgentCapabilities, AgentSkill, MissingAPIKeyError
-from A2A.common.utils.push_notification_auth import PushNotificationSenderAuth
-from A2A.Manus.task_manager import AgentTaskManager,MultiturnsTaskManager
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.tasks import InMemoryTaskStore, InMemoryPushNotifier
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentSkill,
+)
+
+
+from A2A.Manus.agent_executor import StreamManusExecutor
 from A2A.Manus.multiturns_agent import Multiturns_A2AManus
 from app.tool.terminate import _TERMINATE_DESCRIPTION
 from app.tool import Terminate, ToolCollection
@@ -10,8 +17,7 @@ from app.tool.browser_use_tool import BrowserUseTool, _BROWSER_DESCRIPTION
 from app.tool.mcp import MCPClients, MCPClientTool
 from app.tool.python_execute import PythonExecute
 from app.tool.str_replace_editor import StrReplaceEditor, _STR_REPLACE_EDITOR_DESCRIPTION
-import click
-import os
+import httpx
 import logging
 from dotenv import load_dotenv
 import asyncio
@@ -76,8 +82,6 @@ async def main(host:str = "localhost", port:int = 10000):
             skills=skills,
         )
 
-        notification_sender_auth = PushNotificationSenderAuth()
-        notification_sender_auth.generate_jwk()
         A2AManus_instance = await Multiturns_A2AManus.create(max_steps=5,available_tools=ToolCollection(
             PythonExecute(),
             BrowserUseTool(),
@@ -86,22 +90,23 @@ async def main(host:str = "localhost", port:int = 10000):
             Terminate(),
         ))
         logger.info(f"available_tools: {A2AManus_instance.available_tools.tool_map.keys()}")
-        server = A2AServer(
-            agent_card=agent_card,
-            task_manager=MultiturnsTaskManager(agent=A2AManus_instance, notification_sender_auth=notification_sender_auth),
-            host=host,
-            port=port,
+
+
+        httpx_client = httpx.AsyncClient()
+        request_handler = DefaultRequestHandler(
+            agent_executor=StreamManusExecutor(agent=A2AManus_instance),
+            task_store=InMemoryTaskStore(),
+            push_notifier=InMemoryPushNotifier(httpx_client),
         )
 
-        server.app.add_route(
-            "/.well-known/jwks.json", notification_sender_auth.handle_jwks_endpoint, methods=["GET"]
+
+
+        server = A2AStarletteApplication(
+            agent_card=agent_card, http_handler=request_handler
         )
 
         logger.info(f"Starting server on {host}:{port}")
-        return server
-    except MissingAPIKeyError as e:
-        logger.error(f"Error: {e}")
-        exit(1)
+        return server.build()
     except Exception as e:
         logger.error(f"An error occurred during server startup: {e}")
         exit(1)
@@ -109,8 +114,8 @@ async def main(host:str = "localhost", port:int = 10000):
 def run_server(host: Optional[str] = "localhost", port: Optional[int] = 10000):
     try:
         import uvicorn
-        server = asyncio.run(main(host, port))
-        config = uvicorn.Config(app=server.app, host=host, port=port, loop="asyncio", proxy_headers=True)
+        app = asyncio.run(main(host, port))
+        config = uvicorn.Config(app=app, host=host, port=port, loop="asyncio", proxy_headers=True)
         uvicorn.Server(config=config).run()
         logger.info(f"Server started on {host}:{port}")
     except Exception as e:
