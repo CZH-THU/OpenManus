@@ -12,7 +12,7 @@ setup(
     description="A versatile agent that can solve various tasks using multiple tools",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/mannaandpoem/OpenManus",
+    url="https://github.com/FoundationAgents/OpenManus",
     packages=find_packages(),
     install_requires=[
         "pydantic~=2.10.4",

@@ -4,7 +4,7 @@
 
 [English](README.md) | [中文](README_zh.md) | [한국어](README_ko.md) | 日本語
 
-[![GitHub stars](https://img.shields.io/github/stars/mannaandpoem/OpenManus?style=social)](https://github.com/mannaandpoem/OpenManus/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/FoundationAgents/OpenManus?style=social)](https://github.com/FoundationAgents/OpenManus/stargazers)
 &ensp;
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) &ensp;
 [![Discord Follow](https://dcbadge.vercel.app/api/server/DYn29wFk9z?style=flat)](https://discord.gg/DYn29wFk9z)
@@ -43,7 +43,7 @@ conda activate open_manus
 2. リポジトリをクローンします：
 
 ```bash
-git clone https://github.com/mannaandpoem/OpenManus.git
+git clone https://github.com/FoundationAgents/OpenManus.git
 cd OpenManus
 ```
 
@@ -64,7 +64,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 2. リポジトリをクローンします：
 
 ```bash
-git clone https://github.com/mannaandpoem/OpenManus.git
+git clone https://github.com/FoundationAgents/OpenManus.git
 cd OpenManus
 ```
 
@@ -137,6 +137,19 @@ python run_mcp.py
 python run_flow.py
 ```
 
+## カスタムマルチエージェントの追加
+
+現在、一般的なOpenManusエージェントに加えて、データ分析とデータ可視化タスクに適したDataAnalysisエージェントが組み込まれています。このエージェントを`config.toml`の`run_flow`に追加することができます。
+
+```toml
+# run-flowのオプション設定
+[runflow]
+use_data_analysis_agent = true     # デフォルトでは無効、trueに変更すると有効化されます
+```
+
+これに加えて、エージェントが正常に動作するために必要な依存関係をインストールする必要があります：[具体的なインストールガイド](app/tool/chart_visualization/README_ja.md##インストール)
+
+
 ## 貢献方法
 
 我々は建設的な意見や有益な貢献を歓迎します！issueを作成するか、プルリクエストを提出してください。
@@ -154,7 +167,7 @@ Feishuのネットワーキンググループに参加して、他の開発者�
 
 ## スター履歴
 
-[![Star History Chart](https://api.star-history.com/svg?repos=mannaandpoem/OpenManus&type=Date)](https://star-history.com/#mannaandpoem/OpenManus&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=FoundationAgents/OpenManus&type=Date)](https://star-history.com/#FoundationAgents/OpenManus&Date)
 
 ## 謝辞
 
