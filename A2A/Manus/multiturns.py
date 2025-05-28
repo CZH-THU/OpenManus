@@ -82,7 +82,7 @@ async def main(host:str = "localhost", port:int = 10000):
             skills=skills,
         )
 
-        A2AManus_instance = await Multiturns_A2AManus.create(max_steps=5,available_tools=ToolCollection(
+        A2AManus_instance = await Multiturns_A2AManus.create(max_steps=10,available_tools=ToolCollection(
             PythonExecute(),
             BrowserUseTool(),
             StrReplaceEditor(),

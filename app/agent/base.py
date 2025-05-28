@@ -310,6 +310,8 @@ class BaseAgent(BaseModel, ABC):
             self.update_session(sessionId,"user", request)
 
         results: List[str] = []
+        history: List[str] = [f"user: {request}"] if request else []
+        thoughts: List[str] = []
         async with self.state_context(AgentState.RUNNING):
             while (
                 self.current_step < self.max_steps and self.state != AgentState.FINISHED
@@ -319,6 +321,9 @@ class BaseAgent(BaseModel, ABC):
                 logger.info(f"Executing step {self.current_step}/{self.max_steps}")
                 yield f"Executing step {self.current_step}/{self.max_steps}"
                 async for step_result in self.stream_step_session(sessionId):
+                    history.append(f"step {self.current_step}: {step_result}")
+                    if "thoughts:" in step_result:
+                        thoughts.append(step_result)
                     yield step_result
 
                     # Check for stuck state
@@ -332,7 +337,10 @@ class BaseAgent(BaseModel, ABC):
                 self.state = AgentState.IDLE
                 results.append(f"Terminated: Reached max steps ({self.max_steps})")
         await SANDBOX_CLIENT.cleanup()
-        yield "\n Results:".join(results) if results else "No steps executed"
+        # yield "\n Results:".join(results) if results else "No steps executed"
+        yield f"Summary: {thoughts[-1]}" if thoughts else "Summary: No thoughts generated"
+        history.clear()
+        thoughts.clear()
 
     @abstractmethod
     async def step(self) -> str:

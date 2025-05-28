@@ -50,7 +50,7 @@ class Multiturns_A2AManus(Manus):
                 "require_user_input": True,
                 "content": response
             }
-        if (self.current_step >= self.max_steps and self.state != AgentState.RUNNING) or self.state == AgentState.FINISHED or "Results:" in response:
+        if (self.current_step >= self.max_steps and response.startswith("Summary:")) or (self.state != AgentState.RUNNING and response.startswith("Summary:")):
             return {
                 "is_task_complete": True,
                 "require_user_input": False,
