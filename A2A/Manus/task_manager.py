@@ -251,7 +251,7 @@ class AgentTaskManager(InMemoryTaskManager):
         return True
 
 
-class MutilturnsTaskManager(AgentTaskManager):
+class MultiturnsTaskManager(AgentTaskManager):
     def __init__(self, notification_sender_auth: PushNotificationSenderAuth, agent: A2AManus):
         super().__init__(notification_sender_auth = notification_sender_auth)
         self.agent=agent

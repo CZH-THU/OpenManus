@@ -11,7 +11,7 @@ class ResponseFormat(BaseModel):
     status: Literal["input_required", "completed", "error"] = "input_required"
     message: str
 
-class Mulitturns_A2AManus(Manus):
+class Multiturns_A2AManus(Manus):
 
     async def invoke(self, query, sessionId) -> str:
         config = {"configurable": {"thread_id": sessionId}}

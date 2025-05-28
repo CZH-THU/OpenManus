@@ -1,8 +1,8 @@
 from A2A.common.server import A2AServer
 from A2A.common.types import AgentCard, AgentCapabilities, AgentSkill, MissingAPIKeyError
 from A2A.common.utils.push_notification_auth import PushNotificationSenderAuth
-from A2A.Manus.task_manager import AgentTaskManager,MutilturnsTaskManager
-from A2A.Manus.mulitturns_agent import Mulitturns_A2AManus
+from A2A.Manus.task_manager import AgentTaskManager,MultiturnsTaskManager
+from A2A.Manus.multiturns_agent import Multiturns_A2AManus
 from app.tool.terminate import _TERMINATE_DESCRIPTION
 from app.tool import Terminate, ToolCollection
 from app.tool.ask_human import AskHuman,AskHuman_stream
@@ -70,15 +70,15 @@ async def main(host:str = "localhost", port:int = 10000):
             description="A versatile agent that can solve various tasks using multiple tools including MCP-based tools",
             url=f"http://{host}:{port}/",
             version="1.0.0",
-            defaultInputModes=Mulitturns_A2AManus.SUPPORTED_CONTENT_TYPES,
-            defaultOutputModes=Mulitturns_A2AManus.SUPPORTED_CONTENT_TYPES,
+            defaultInputModes=Multiturns_A2AManus.SUPPORTED_CONTENT_TYPES,
+            defaultOutputModes=Multiturns_A2AManus.SUPPORTED_CONTENT_TYPES,
             capabilities=capabilities,
             skills=skills,
         )
 
         notification_sender_auth = PushNotificationSenderAuth()
         notification_sender_auth.generate_jwk()
-        A2AManus_instance = await Mulitturns_A2AManus.create(max_steps=5,available_tools=ToolCollection(
+        A2AManus_instance = await Multiturns_A2AManus.create(max_steps=5,available_tools=ToolCollection(
             PythonExecute(),
             BrowserUseTool(),
             StrReplaceEditor(),
@@ -88,7 +88,7 @@ async def main(host:str = "localhost", port:int = 10000):
         logger.info(f"available_tools: {A2AManus_instance.available_tools.tool_map.keys()}")
         server = A2AServer(
             agent_card=agent_card,
-            task_manager=MutilturnsTaskManager(agent=A2AManus_instance, notification_sender_auth=notification_sender_auth),
+            task_manager=MultiturnsTaskManager(agent=A2AManus_instance, notification_sender_auth=notification_sender_auth),
             host=host,
             port=port,
         )
